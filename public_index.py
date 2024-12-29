@@ -15,10 +15,16 @@ import time
 # set to false to only test against stored values without saving
 SAVING = False
 ALR="alr"
-STD_DEVS = 3.0 # 3sigma=99.73%, 2sigma=95.45%, 1sigma=68.27%
+
+STD_DEVS = 3 # 3sigma=99.73%, 2sigma=95.45%, 1sigma=68.27%
+PLOT_DEVS = 1.5
+# We want larger dev to reject outliers; meanwhile, for plotting we want to see
+# smaller differences.
+
 KEEP_SAMPLES = 10 # number of samples to keep for each release
 MIN_SAMPLES = int(KEEP_SAMPLES/2) # to detect and discard outliers
 TIMEOUT = 30 # seconds after which the search is aborted
+FULL_LIST = False # set to True to solve all releases in a crate instead of just the latest one
 
 # Global to hold alr version
 alr_version = ""
@@ -183,16 +189,24 @@ def load_releases(releases:list, alr_version:str="") -> list:
 # Function that lists all releases in the public index
 def list_releases(crate:str="") -> list:
     # Obtain release from `alr search`, which returns a json list of objects:
-    json_releases = json.loads(subprocess.check_output
-                               (["alr", "--format", "search", "--full", "--list"])
-                               .decode())
+    args = [ALR, "--format", "search", "--list"]
+    if FULL_LIST:
+        args.append("--full")
+    json_releases = json.loads(subprocess.check_output(args).decode())
 
     # Convert to list of Release objects
     releases = []
     for release in json_releases:
         if crate is not None and crate not in f'{release["name"]}={release["version"]}':
             continue
-        releases.append(Release(release["name"], release["version"]))
+        release = Release(release["name"], release["version"])
+
+        # Keep only if it has dependencies (no point in solving otherwise)
+        if "Dependencies (direct):" in subprocess.run([ALR,
+                                                       "show",
+                                                       release.milestone()],
+                                                      capture_output=True).stdout.decode():
+            releases.append(release)
 
     return releases
 
@@ -229,7 +243,7 @@ def plot(releases:list, baseline:list=None):
                     if release.milestone() not in baseline
                     or baseline[release.milestone()].average is None
                     or abs(release.average - baseline[release.milestone()].average)
-                    > STD_DEVS * (release.std_dev + baseline[release.milestone()].std_dev)]
+                    > PLOT_DEVS * (release.std_dev + baseline[release.milestone()].std_dev)]
         print(f"Filtered out {old - len(releases)} releases within statistical bounds")
 
     # Sort by mean time to solve
