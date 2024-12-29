@@ -16,8 +16,8 @@ import time
 SAVING = False
 ALR="alr"
 STD_DEVS = 3.0 # 3sigma=99.73%, 2sigma=95.45%, 1sigma=68.27%
-KEEP_SAMPLES = 10
-MIN_SAMPLES = KEEP_SAMPLES # to detect outliers
+KEEP_SAMPLES = 10 # number of samples to keep for each release
+MIN_SAMPLES = int(KEEP_SAMPLES/2) # to detect and discard outliers
 TIMEOUT = 30 # seconds after which the search is aborted
 
 # Global to hold alr version
@@ -103,6 +103,25 @@ class Release:
     def clear_samples(self):
         self.samples = []
 
+    def compute_stats(self):
+        if len(self.samples) > 0:
+            self.average = sum(self.samples) / len(self.samples)
+            self.std_dev = \
+                (sum([(sample - self.average) ** 2
+                      for sample in self.samples]) / len(self.samples)) ** 0.5
+        else:
+            self.average = None
+            self.std_dev = None
+
+    def drop_outliers(self):
+        self.compute_stats()
+
+        if len(self.samples) < MIN_SAMPLES:
+            return
+
+        if self.average is not None:
+            self.samples = [sample for sample in self.samples
+                            if abs(sample - self.average) <= STD_DEVS * self.std_dev]
 
     def path(self, alr_version:str=""):
         return \
@@ -204,12 +223,14 @@ def plot(releases:list, baseline:list=None):
     compute_stats(releases)
 
     # Filter out releases with average in the baseline average +/- 3 sigma
+    old = len(releases)
     if baseline is not None:
         releases = [release for release in releases
                     if release.milestone() not in baseline
                     or baseline[release.milestone()].average is None
                     or abs(release.average - baseline[release.milestone()].average)
                     > STD_DEVS * (release.std_dev + baseline[release.milestone()].std_dev)]
+        print(f"Filtered out {old - len(releases)} releases within statistical bounds")
 
     # Sort by mean time to solve
     releases.sort(key=lambda release: release.average
