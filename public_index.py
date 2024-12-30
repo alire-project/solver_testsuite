@@ -132,7 +132,7 @@ class Release:
     def path(self, alr_version:str=""):
         return \
             f"samples/{platform.node()}/" + \
-            ("" if alr_version == "" else f"{alr_version}/") + \
+            ("current/" if alr_version == "" else f"{alr_version}/") + \
             f"{self.name}={self.version}.json"
 
     def load(self, max:int=999999, alr_version:str="") -> bool:
