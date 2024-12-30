@@ -13,21 +13,20 @@ import subprocess
 import time
 
 # set to false to only test against stored values without saving
-SAVING = False
-ALR="alr"
+SAVING = True
 
 STD_DEVS = 3 # 3sigma=99.73%, 2sigma=95.45%, 1sigma=68.27%
 PLOT_DEVS = 1.5
 # We want larger dev to reject outliers; meanwhile, for plotting we want to see
 # smaller differences.
 
-KEEP_SAMPLES = 10 # number of samples to keep for each release
-MIN_SAMPLES = int(KEEP_SAMPLES/2) # to detect and discard outliers
+MIN_SAMPLES_FOR_OUTLIERS = 10 # Number of samples before we do any filtering
+MAX_SAMPLES = 100 # max number of samples to keep for each release
 TIMEOUT = 30 # seconds after which the search is aborted
 FULL_LIST = False # set to True to solve all releases in a crate instead of just the latest one
 
-# Global to hold alr version
-alr_version = ""
+ALR="alr-not-supplied"
+ALR_VERSION = ""
 
 
 class Release:
@@ -77,29 +76,9 @@ class Release:
                     regressions.add(self.milestone())
                 return new_solvable
             else:
-                # Check timings
+                self.samples.append(elapsed)
 
-                outlier = False
-
-                if len(self.samples) > 1:
-                    avg_time = sum([sample for sample in self.samples]) / len(self.samples)
-                    std_dev = (sum([(sample - avg_time) ** 2 for sample in self.samples]) / len(self.samples)) ** 0.5
-                    print(f"  Avg time: {avg_time:.2f} s, Std dev: {std_dev:.2f} s")
-
-                    # Test if the new sample is an outlier
-                    if len(self.samples) >= MIN_SAMPLES:
-                        if abs(elapsed - avg_time) > STD_DEVS * std_dev:
-                            outlier = True
-                            good = elapsed < avg_time
-                            print(f"  OUTLIER: {elapsed:.2f} s "
-                                  f"{'GOOD' if good else 'BAD'} "
-                                  f"({elapsed - avg_time:+.2f} s)")
-
-                if not outlier:
-                    # Add the new sample to the list
-                    self.samples.append(elapsed)
-
-                return not outlier
+                return True
         else:
             self.solvable = new_solvable
             self.samples.append(elapsed)
@@ -122,12 +101,16 @@ class Release:
     def drop_outliers(self):
         self.compute_stats()
 
-        if len(self.samples) < MIN_SAMPLES:
+        if len(self.samples) < MIN_SAMPLES_FOR_OUTLIERS:
             return
 
+        old_len = len(self.samples)
         if self.average is not None:
             self.samples = [sample for sample in self.samples
                             if abs(sample - self.average) <= STD_DEVS * self.std_dev]
+
+        print(f"  Dropped {old_len - len(self.samples)} outliers (
+              {(old_len - len(self.samples)) * 100 / old_len:.1f}% of samples)")
 
     def path(self, alr_version:str=""):
         return \
@@ -156,8 +139,8 @@ class Release:
         if not SAVING:
             return
 
-        if len(self.samples) > KEEP_SAMPLES:
-            self.samples = self.samples[-KEEP_SAMPLES:]
+        if len(self.samples) > MAX_SAMPLES:
+            self.samples = self.samples[-MAX_SAMPLES:]
 
         # Create parent directory if it does not exist
         os.makedirs(os.path.dirname(self.path()), exist_ok=True)
@@ -178,7 +161,7 @@ def load_releases(releases:list, alr_version:str="") -> list:
         release.clear_samples()
 
     for release in result:
-        if release.load(KEEP_SAMPLES, alr_version):
+        if release.load(MAX_SAMPLES, alr_version):
             print(f"   {release.name}={release.version} "
                 f"{'solvable' if release.solvable else 'not solvable'} "
                 f"({len(release.samples)} samples)")
@@ -189,25 +172,28 @@ def load_releases(releases:list, alr_version:str="") -> list:
 # Function that lists all releases in the public index
 def list_releases(crate:str="") -> list:
     # Obtain release from `alr search`, which returns a json list of objects:
-    args = [ALR, "--format", "search", "--list"]
+    args = ["alr", "--format", "search", "--list"]
     if FULL_LIST:
         args.append("--full")
     json_releases = json.loads(subprocess.check_output(args).decode())
 
     # Convert to list of Release objects
+    print("Filtering", end="", flush=True)
     releases = []
     for release in json_releases:
+        print(".", end="", flush=True)
         if crate is not None and crate not in f'{release["name"]}={release["version"]}':
             continue
         release = Release(release["name"], release["version"])
 
         # Keep only if it has dependencies (no point in solving otherwise)
-        if "Dependencies (direct):" in subprocess.run([ALR,
+        if "Dependencies (direct):" in subprocess.run(["alr",
                                                        "show",
                                                        release.milestone()],
                                                       capture_output=True).stdout.decode():
             releases.append(release)
 
+    print()
     return releases
 
 
@@ -273,7 +259,7 @@ def plot(releases:list, baseline:list=None):
 
     # Plot a box plot for each release (if no baseline) or with a significant deviation
     fig, ax = plt.subplots()
-    ax.set_title(f"Alire {alr_version}")
+    ax.set_title(f"Alire {ALR_VERSION}")
     ax.set_ylabel("Time to solve (s)")
     ax.set_xlabel("Release")
 
@@ -324,13 +310,27 @@ def parse_args() -> dict:
     import argparse
 
     parser = argparse.ArgumentParser(description="Solve all releases in the public index")
+
+    parser.add_argument("--solve", action="store_true", help="Plot results")
+    parser.add_argument("--tag", type=str, default="", required=True,
+                        help="Tag to use for the results")
     parser.add_argument("--crate", help="Crate name/milestone to solve")
     parser.add_argument("--rounds", type=int, default=1,
                         help="Number of rounds to solve each crate")
+    parser.add_argument("--alr", type=str, default="alr",
+                        help="Name of the alr executable")
+
     parser.add_argument("--plot", action="store_true", help="Plot results")
     parser.add_argument("--compare", type=str, default="",
-                        help="Compare to previous version")
+                        help="Compare to given version")
+
+    parser.add_argument("--prune", action="store_true", help="Prune outliers")
+
     args = parser.parse_args()
+
+    if args.alr != "alr":
+        global ALR
+        ALR = args.alr
 
     return args
 
@@ -338,8 +338,8 @@ def parse_args() -> dict:
 def main():
 
     # Obtain Alire version from `alr --version` and store in the global
-    global alr_version
-    alr_version = subprocess.check_output(["alr", "--version"]).decode("utf-8")
+    global ALR_VERSION
+    ALR_VERSION = subprocess.check_output(["alr", "--version"]).decode("utf-8")
 
     args = parse_args()
 
@@ -347,14 +347,14 @@ def main():
     print("Listing releases...")
     releases = list_releases(args.crate)
 
-    print("Loading releases...")
-    releases = load_releases(releases)
+    print(f"Loading releases ({args.tag})...")
+    releases = load_releases(releases, args.tag)
 
     if args.compare:
-        print("Loading baseline...")
+        print(f"Loading baseline ({args.compare})...")
         baseline = load_releases(releases, args.compare)
 
-    if not args.plot:
+    if args.solve:
         print(f"Running {args.rounds} rounds for {args.crate if args.crate else 'all crates'}")
 
     # Randomize list order to avoid bias from partial runs to some extent
@@ -371,19 +371,24 @@ def main():
 
     if args.plot:
         plot(releases, baseline)
-    else:
+    elif args.prune:
+        for release in releases:
+            print(f"{release.name}={release.version}:")
+            release.drop_outliers()
+            release.save()
+    elif args.solve:
         for _ in range(args.rounds):
             # For each release, solve it and compare to previous results
             for release in releases:
                 print(f"{release.name}={release.version}")
 
                 # Skip if already solved required samples
-                if len(release.samples) >= KEEP_SAMPLES:
-                    print(f"  Already solved {KEEP_SAMPLES} samples, skipping")
+                if len(release.samples) >= MAX_SAMPLES:
+                    print(f"  Already solved {MAX_SAMPLES} samples, skipping")
                     continue
 
                 # Solve the release, keeping track of time needed
-                if release.solve(KEEP_SAMPLES, regressions, progressions):
+                if release.solve(MAX_SAMPLES, regressions, progressions):
                     release.save()
 
             # Print results
@@ -393,6 +398,12 @@ def main():
             print(f"Regressions: {len(regressions)}")
             for regression in regressions:
                 print(f"  {regression}")
+    else:
+        # Report num of releases and avg number of samples
+        print(f"Tag: {args.tag}")
+        print(f"Releases: {len(releases)}")
+        print(f"Avg samples: {sum([len(release.samples) for release in releases]) / len(releases):.1f}")
+        print("No action to perform")
 
 
 # Start of main script
