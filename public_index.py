@@ -109,23 +109,23 @@ class Release:
             self.samples = [sample for sample in self.samples
                             if abs(sample - self.average) <= STD_DEVS * self.std_dev]
 
-        print(f"  Dropped {old_len - len(self.samples)} outliers (
-              {(old_len - len(self.samples)) * 100 / old_len:.1f}% of samples)")
+        print(f"dropped {old_len - len(self.samples)} outliers ("
+              f"{(old_len - len(self.samples)) * 100 / old_len:.1f}% of samples)")
 
-    def path(self, alr_version:str=""):
+    def path(self, tag:str):
         return \
             f"samples/{platform.node()}/" + \
-            ("current/" if alr_version == "" else f"{alr_version}/") + \
+            ("current/" if tag == "" else f"{tag}/") + \
             f"{self.name}={self.version}.json"
 
-    def load(self, max:int=999999, alr_version:str="") -> bool:
+    def load(self, tag:str, max:int=999999) -> bool:
         # Don't load if release already has samples
         if len(self.samples) > 0:
             return True
 
         # Load the release from a previous run
-        if os.path.isfile(self.path(alr_version)):
-            with open(self.path(alr_version), "r") as f:
+        if os.path.isfile(self.path(tag)):
+            with open(self.path(tag), "r") as f:
                 data = json.load(f)
                 self.solvable = data["solvable"]
                 self.samples = data["samples"]
@@ -135,7 +135,7 @@ class Release:
         else:
             return False
 
-    def save(self):
+    def save(self, tag:str):
         if not SAVING:
             return
 
@@ -143,15 +143,15 @@ class Release:
             self.samples = self.samples[-MAX_SAMPLES:]
 
         # Create parent directory if it does not exist
-        os.makedirs(os.path.dirname(self.path()), exist_ok=True)
+        os.makedirs(os.path.dirname(self.path(tag)), exist_ok=True)
 
         # Save the release to a file
-        with open(self.path(), "w") as f:
+        with open(self.path(tag), "w") as f:
             json.dump({"solvable": self.solvable,
                        "samples": self.samples}, f)
 
 
-def load_releases(releases:list, alr_version:str="") -> list:
+def load_releases(releases:list, tag:str) -> list:
     # Load the releases from a previous run. If a version is specified, load
     # from that specific location, otherwise load from the default location.
     result = copy.deepcopy(releases)
@@ -161,7 +161,7 @@ def load_releases(releases:list, alr_version:str="") -> list:
         release.clear_samples()
 
     for release in result:
-        if release.load(MAX_SAMPLES, alr_version):
+        if release.load(max=MAX_SAMPLES, tag=tag):
             print(f"   {release.name}={release.version} "
                 f"{'solvable' if release.solvable else 'not solvable'} "
                 f"({len(release.samples)} samples)")
@@ -305,6 +305,17 @@ def plot(releases:list, baseline:list=None):
     plt.show()
 
 
+def report(releases:list):
+    # Report num of releases and avg number of samples
+    print(f"Releases: {len(releases)}")
+    print(f"Max samples: {max([len(release.samples) for release in releases])}")
+    print(f"Min samples: {min([len(release.samples) for release in releases])}")
+    print(f"Avg samples: {sum([len(release.samples) for release in releases]) / len(releases):.1f}")
+    print(f"Total samples: {sum([len(release.samples) for release in releases])}")
+    print(f"Solvable: {len([release for release in releases if release.solvable])}")
+    print(f"Unsolvable: {len([release for release in releases if not release.solvable])}")
+
+
 def parse_args() -> dict:
     # Parse command line arguments
     import argparse
@@ -357,10 +368,6 @@ def main():
     if args.solve:
         print(f"Running {args.rounds} rounds for {args.crate if args.crate else 'all crates'}")
 
-    # Randomize list order to avoid bias from partial runs to some extent
-    # TODO: save releases all at once at the end of a run
-    random.shuffle(releases)
-
     # Keep track of regressions and progressions
     progressions = set()
     regressions = set()
@@ -373,10 +380,14 @@ def main():
         plot(releases, baseline)
     elif args.prune:
         for release in releases:
-            print(f"{release.name}={release.version}:")
+            print(f"{release.name}={release.version}: ", end="")
             release.drop_outliers()
-            release.save()
+            release.save(args.tag)
+        report(releases)
     elif args.solve:
+        # Randomize list order to avoid bias from partial runs to some extent
+        random.shuffle(releases)
+
         for _ in range(args.rounds):
             # For each release, solve it and compare to previous results
             for release in releases:
@@ -401,8 +412,7 @@ def main():
     else:
         # Report num of releases and avg number of samples
         print(f"Tag: {args.tag}")
-        print(f"Releases: {len(releases)}")
-        print(f"Avg samples: {sum([len(release.samples) for release in releases]) / len(releases):.1f}")
+        report(releases)
         print("No action to perform")
 
 
