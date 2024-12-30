@@ -102,6 +102,7 @@ class Release:
         self.compute_stats()
 
         if len(self.samples) < MIN_SAMPLES_FOR_OUTLIERS:
+            print(f"not enough samples ({len(self.samples)}) to drop outliers")
             return
 
         old_len = len(self.samples)
@@ -110,7 +111,8 @@ class Release:
                             if abs(sample - self.average) <= STD_DEVS * self.std_dev]
 
         print(f"dropped {old_len - len(self.samples)} outliers ("
-              f"{(old_len - len(self.samples)) * 100 / old_len:.1f}% of samples)")
+              f"{(old_len - len(self.samples)) * 100 / old_len:.1f}% of "
+              f"{len(self.samples)} samples)")
 
     def path(self, tag:str):
         return \
@@ -339,7 +341,7 @@ def parse_args() -> dict:
 
     args = parser.parse_args()
 
-    if args.alr != "alr":
+    if args.alr is not None:
         global ALR
         ALR = args.alr
 
@@ -350,7 +352,9 @@ def main():
 
     # Obtain Alire version from `alr --version` and store in the global
     global ALR_VERSION
-    ALR_VERSION = subprocess.check_output(["alr", "--version"]).decode("utf-8")
+    ALR_VERSION = subprocess.check_output(["alr", "--version"]).decode("utf-8").strip()
+    # The version is actually the part after the space
+    ALR_VERSION = ALR_VERSION.split(" ")[1]
 
     args = parse_args()
 
@@ -385,13 +389,29 @@ def main():
             release.save(args.tag)
         report(releases)
     elif args.solve:
+        # Warn if tag differs from alr version and ask to continue
+        if args.tag != ALR_VERSION:
+            print(f"Warning: tag ({args.tag}) differs from alr version ({ALR_VERSION})")
+            if input("Continue? (y/n) ").lower() != "y":
+                return
+
         # Randomize list order to avoid bias from partial runs to some extent
         random.shuffle(releases)
 
         for _ in range(args.rounds):
+
+            min_samples = min([len(release.samples) for release in releases])
+
             # For each release, solve it and compare to previous results
             for release in releases:
                 print(f"{release.name}={release.version}")
+
+                # Skip if more samples than previous release (to equalize) but
+                # Allow chance to run so some progress is made. Eventually the
+                # lagging ones should catch up. Use 50% chance for this.
+                if len(release.samples) > min_samples and random.random() > 0.5:
+                    print(f"  Excess {len(release.samples) - min_samples} samples, skipping")
+                    continue
 
                 # Skip if already solved required samples
                 if len(release.samples) >= MAX_SAMPLES:
@@ -400,7 +420,7 @@ def main():
 
                 # Solve the release, keeping track of time needed
                 if release.solve(MAX_SAMPLES, regressions, progressions):
-                    release.save()
+                    release.save(args.tag)
 
             # Print results
             print(f"Progressions: {len(progressions)}")
