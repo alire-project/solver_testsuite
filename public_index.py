@@ -77,7 +77,6 @@ class Release:
                 return new_solvable
             else:
                 self.samples.append(elapsed)
-
                 return True
         else:
             self.solvable = new_solvable
@@ -404,7 +403,8 @@ def main():
 
             # For each release, solve it and compare to previous results
             for release in releases:
-                print(f"{release.name}={release.version}")
+                print(f"{release.name}={release.version} "
+                      f"({len(release.samples)} samples)")
 
                 # Skip if more samples than previous release (to equalize) but
                 # Allow chance to run so some progress is made. Eventually the
@@ -419,8 +419,8 @@ def main():
                     continue
 
                 # Solve the release, keeping track of time needed
-                if release.solve(MAX_SAMPLES, regressions, progressions):
-                    release.save(args.tag)
+                release.solve(MAX_SAMPLES, regressions, progressions)
+                release.save(args.tag)
 
             # Print results
             print(f"Progressions: {len(progressions)}")
