@@ -30,18 +30,21 @@ ALR_VERSION = ""
 
 
 class Release:
-    def __init__(self, name, version, solvable=None):
+    def __init__(self, name, version):
         self.name = name
         self.version = version
-        self.solvable = solvable
         self.samples = []
+        self.solved = 0
+        self.unsolved = 0
 
     def milestone(self) -> str:
         return f"{self.name}={self.version}"
 
-    def solve(self, max:int, regressions:set, progressions:set) -> bool:
+    def solve(self) -> bool:
         # Solve the crate and keep track of time needed
         start_time = time.time()
+        timeout = False
+        error = False
         try:
             p = subprocess.run([ALR,
                                 "show",
@@ -50,42 +53,38 @@ class Release:
                                 capture_output=True,
                                 timeout=TIMEOUT)
             p.check_returncode()
-            new_solvable = ("Dependencies cannot be met" not in p.stdout.decode())
+            solvable = ("Dependencies cannot be met" not in p.stdout.decode())
         except subprocess.CalledProcessError:
-            new_solvable = False
+            solvable = False
+            error = True
         except subprocess.TimeoutExpired:
-            new_solvable = False
+            solvable = False
+            timeout = True
             print(f"  TIMEOUT after {TIMEOUT} seconds")
 
         elapsed = round(time.time() - start_time, 2)
 
-        # Print results
-        print(f"  Solvable: {new_solvable} in {elapsed:.2f} seconds "
-              f"{'NOT SOLVABLE' if not new_solvable else ''}")
-
-        # Compare to previous results
-        if self.solvable is not None:
-            if new_solvable != self.solvable:
-                print(f"  CHANGE from {self.solvable} to {new_solvable}"
-                      f" {'REGRESSION' if not new_solvable else 'PROGRESSION'}")
-                self.solvable = new_solvable
-                self.samples = []
-                if new_solvable:
-                    progressions.add(self.milestone())
-                else:
-                    regressions.add(self.milestone())
-                return new_solvable
-            else:
-                self.samples.append(elapsed)
-                return True
+        # Update solved/unsolved counts
+        if solvable:
+            self.solved += 1
         else:
-            self.solvable = new_solvable
-            self.samples.append(elapsed)
-            return True
+            self.unsolved += 1
+
+        self.samples.append(elapsed)
+
+        # Print results
+        print(f"  Solvable: {solvable} in {elapsed:.2f} seconds "
+              f"{'NOT SOLVABLE' if not solvable else ''}"
+              f"{' (error)' if error else ''}"
+              f"{' (timeout)' if timeout else ''}")
+
+        return solvable
 
 
     def clear_samples(self):
         self.samples = []
+        self.solved = 0
+        self.unsolved = 0
 
     def compute_stats(self):
         if len(self.samples) > 0:
@@ -96,6 +95,19 @@ class Release:
         else:
             self.average = None
             self.std_dev = None
+
+    def solvable(self):
+        return self.solved / (self.solved + self.unsolved)
+
+    def solvable_img(self):
+        if self.solved + self.unsolved == 0:
+            return "??"
+        elif self.solved == 0:
+            return "NS"
+        elif self.unsolved == 0:
+            return "OK"
+        else:
+            return f"{self.solved/(self.solved + self.unsolved):.1f}"
 
     def drop_outliers(self):
         self.compute_stats()
@@ -127,11 +139,24 @@ class Release:
         # Load the release from a previous run
         if os.path.isfile(self.path(tag)):
             with open(self.path(tag), "r") as f:
-                data = json.load(f)
-                self.solvable = data["solvable"]
+                try:
+                    data = json.load(f)
+                except:
+                    print(f"Error loading {self.path(tag)}")
+                    raise
                 self.samples = data["samples"]
                 if len(self.samples) > max:
                     self.samples = self.samples[-max:]
+
+                # For back-compatibility, convert solvable if existing to
+                # solved/unsolved counts
+                if "solvable" in data:
+                    self.solved = len(self.samples) if data["solvable"] else 0
+                    self.unsolved = len(self.samples) - self.solved
+                else:
+                    self.solved = data["solved"]
+                    self.unsolved = data["unsolved"]
+
                 return True
         else:
             return False
@@ -148,7 +173,8 @@ class Release:
 
         # Save the release to a file
         with open(self.path(tag), "w") as f:
-            json.dump({"solvable": self.solvable,
+            json.dump({"solved": self.solved,
+                       "unsolved": self.unsolved,
                        "samples": self.samples}, f)
 
 
@@ -240,10 +266,10 @@ def plot(releases:list, baseline:list=None):
     # Prepare data for plotting
     release_samples = [release.samples for release in releases]
     release_labels = [f"{release.milestone()} "
-                      f"({'OK' if release.solvable else 'NS'})"
+                      f"({release.solvable_img()})"
                       for release in releases]
     baseline_labels = ["baseline "
-                       f"({'OK' if baseline[release.milestone()].solvable else 'NS'})"
+                       f"({baseline[release.milestone()].solvable_img()})"
                        for release in releases]
 
     # Calculate positions for the boxplots
@@ -349,13 +375,13 @@ def parse_args() -> dict:
 
 def main():
 
+    args = parse_args()
+
     # Obtain Alire version from `alr --version` and store in the global
     global ALR_VERSION
-    ALR_VERSION = subprocess.check_output(["alr", "--version"]).decode("utf-8").strip()
+    ALR_VERSION = subprocess.check_output([ALR, "--version"]).decode("utf-8").strip()
     # The version is actually the part after the space
     ALR_VERSION = ALR_VERSION.split(" ")[1]
-
-    args = parse_args()
 
     # List all releases in the public index
     print("Listing releases...")
@@ -370,10 +396,6 @@ def main():
 
     if args.solve:
         print(f"Running {args.rounds} rounds for {args.crate if args.crate else 'all crates'}")
-
-    # Keep track of regressions and progressions
-    progressions = set()
-    regressions = set()
 
     # If not saving, only test for one round against stored values
     if not SAVING:
@@ -419,16 +441,8 @@ def main():
                     continue
 
                 # Solve the release, keeping track of time needed
-                release.solve(MAX_SAMPLES, regressions, progressions)
+                release.solve()
                 release.save(args.tag)
-
-            # Print results
-            print(f"Progressions: {len(progressions)}")
-            for progression in progressions:
-                print(f"  {progression}")
-            print(f"Regressions: {len(regressions)}")
-            for regression in regressions:
-                print(f"  {regression}")
     else:
         # Report num of releases and avg number of samples
         print(f"Tag: {args.tag}")
