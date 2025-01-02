@@ -6,11 +6,14 @@
 # Class holding crate name, version string, solvable and time to solve
 import copy
 import json
+import matplotlib.pyplot as plt
 import os
 import platform
 import random
 import subprocess
 import time
+
+from tqdm import tqdm
 
 # set to false to only test against stored values without saving
 SAVING = True
@@ -157,7 +160,12 @@ class Release:
                     self.solved = data["solved"]
                     self.unsolved = data["unsolved"]
 
-                return True
+            # Drop any samples with suspicious timing (probably taken with
+            # interruptions) that have twice or more the timeout value
+            self.samples = [sample for sample in self.samples
+                            if sample < 2 * TIMEOUT]
+
+            return True
         else:
             return False
 
@@ -205,10 +213,12 @@ def list_releases(crate:str="") -> list:
     json_releases = json.loads(subprocess.check_output(args).decode())
 
     # Convert to list of Release objects
-    print("Filtering", end="", flush=True)
     releases = []
-    for release in json_releases:
-        print(".", end="", flush=True)
+    for release in tqdm(json_releases, desc="Filtering out independent releases"):
+
+        # Print progress using a nice library, since we know the total releases
+
+
         if crate is not None and crate not in f'{release["name"]}={release["version"]}':
             continue
         release = Release(release["name"], release["version"])
@@ -237,7 +247,6 @@ def compute_stats(releases:list):
 
 
 def plot(releases:list, baseline:list=None):
-    import matplotlib.pyplot as plt
 
     # Filter out releases with no samples
     releases = [release for release in releases if len(release.samples) > 0]
@@ -268,9 +277,10 @@ def plot(releases:list, baseline:list=None):
     release_labels = [f"{release.milestone()} "
                       f"({release.solvable_img()})"
                       for release in releases]
-    baseline_labels = ["baseline "
-                       f"({baseline[release.milestone()].solvable_img()})"
-                       for release in releases]
+    if baseline is not None:
+        baseline_labels = ["baseline "
+                        f"({baseline[release.milestone()].solvable_img()})"
+                        for release in releases]
 
     # Calculate positions for the boxplots
     positions = list(range(1, len(release_samples) + 1))
@@ -316,13 +326,13 @@ def plot(releases:list, baseline:list=None):
             ax.axhspan(positions[i] - 0.5, positions[i] + 0.3, color='yellow', alpha=0.1)
 
     # Plot the boxplots for releases
-    ax.boxplot(release_samples, labels=release_labels, vert=False,
+    ax.boxplot(release_samples, tick_labels=release_labels, vert=False,
                positions=positions,
                patch_artist=True, boxprops=dict(facecolor="lightblue"))
 
     # Overlay the boxplots for baseline
     if baseline is not None:
-        ax.boxplot(baseline_samples, labels=baseline_labels, vert=False,
+        ax.boxplot(baseline_samples, tick_labels=baseline_labels, vert=False,
                    positions=baseline_positions,
                    patch_artist=True, boxprops=dict(facecolor="lightgreen"))
 
@@ -339,8 +349,8 @@ def report(releases:list):
     print(f"Min samples: {min([len(release.samples) for release in releases])}")
     print(f"Avg samples: {sum([len(release.samples) for release in releases]) / len(releases):.1f}")
     print(f"Total samples: {sum([len(release.samples) for release in releases])}")
-    print(f"Solvable: {len([release for release in releases if release.solvable])}")
-    print(f"Unsolvable: {len([release for release in releases if not release.solvable])}")
+    print(f"Solvable: {len([release for release in releases if release.solvable >= 0.5])}")
+    print(f"Unsolvable: {len([release for release in releases if release.solvable < 0.5])}")
 
 
 def parse_args() -> dict:
@@ -390,6 +400,7 @@ def main():
     print(f"Loading releases ({args.tag})...")
     releases = load_releases(releases, args.tag)
 
+    baseline = None
     if args.compare:
         print(f"Loading baseline ({args.compare})...")
         baseline = load_releases(releases, args.compare)
