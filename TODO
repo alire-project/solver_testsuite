@@ -1,4 +1,5 @@
 Solver:
 - Check what's going on with suika_programming and two compilers in solution
-- Check slowdown solving awa crate
 - Test of solver timeout behaviors
+- When external detection is attempted, if no releases are added to the index,
+  we should mark the external as unsatisfiable.
