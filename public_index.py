@@ -246,7 +246,7 @@ def compute_stats(releases:list):
             release.average = None
 
 
-def plot(releases:list, baseline:list=None):
+def plot(releases:list, baseline:list=None, include:str=""):
 
     # Filter out releases with no samples
     releases = [release for release in releases if len(release.samples) > 0]
@@ -267,6 +267,12 @@ def plot(releases:list, baseline:list=None):
                     or abs(release.average - baseline[release.milestone()].average)
                     > PLOT_DEVS * (release.std_dev + baseline[release.milestone()].std_dev)]
         print(f"Filtered out {old - len(releases)} releases within statistical bounds")
+
+    # Filter out releases not in --plot-include filter
+    if include:
+        print(f"Filtering with --plot-include={include}")
+        releases = [release for release in releases
+                    if include in release.solvable_img()]
 
     # Sort by mean time to solve
     releases.sort(key=lambda release: release.average
@@ -371,6 +377,8 @@ def parse_args() -> dict:
     parser.add_argument("--plot", action="store_true", help="Plot results")
     parser.add_argument("--compare", type=str, default="",
                         help="Compare to given version")
+    parser.add_argument("--plot-include", type=str, default=None,
+                        help="Substring to look for in solving status")
 
     parser.add_argument("--prune", action="store_true", help="Prune outliers")
 
@@ -415,7 +423,7 @@ def main():
         args.rounds = 1
 
     if args.plot:
-        plot(releases, baseline)
+        plot(releases, baseline, include=args.plot_include)
     elif args.prune:
         for release in releases:
             print(f"{release.name}={release.version}: ", end="")
