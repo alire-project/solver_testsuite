@@ -385,6 +385,8 @@ def parse_args() -> dict:
 
 def main():
 
+    start = time.time()
+
     args = parse_args()
 
     # Obtain Alire version from `alr --version` and store in the global
@@ -460,6 +462,9 @@ def main():
         report(releases)
         print("No action to perform")
 
+    # Report finish time and elapsed time
+    print(f"Finished at {time.strftime('%H:%M:%S')}, "
+          f"elapsed: {time.time() - start:.2f} seconds")
 
 # Start of main script
 if __name__ == "__main__":
