@@ -403,6 +403,12 @@ def main():
     # The version is actually the part after the space
     ALR_VERSION = ALR_VERSION.split(" ")[1]
 
+    # Early warn if tag differs from alr version and ask to continue
+    if args.solve and args.tag != ALR_VERSION:
+        print(f"Warning: tag ({args.tag}) differs from alr version ({ALR_VERSION})")
+        if input("Continue? (y/n) ").lower() != "y":
+            return
+
     # List all releases in the public index
     print("Listing releases...")
     releases = list_releases(args.crate)
@@ -431,12 +437,6 @@ def main():
             release.save(args.tag)
         report(releases)
     elif args.solve:
-        # Warn if tag differs from alr version and ask to continue
-        if args.tag != ALR_VERSION:
-            print(f"Warning: tag ({args.tag}) differs from alr version ({ALR_VERSION})")
-            if input("Continue? (y/n) ").lower() != "y":
-                return
-
         # Randomize list order to avoid bias from partial runs to some extent
         random.shuffle(releases)
 
