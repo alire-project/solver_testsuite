@@ -1,5 +1,4 @@
 Solver:
-- Check what's going on with suika_programming and two compilers in solution
+- Check what's going on with suika_programming and two compilers in solution at
+  build time (not during solving time, that seems OK)
 - Test of solver timeout behaviors
-- When external detection is attempted, if no releases are added to the index,
-  we should mark the external as unsatisfiable.

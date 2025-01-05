@@ -251,6 +251,15 @@ def plot(releases:list, baseline:list=None, include:str=""):
     # Filter out releases with no samples
     releases = [release for release in releases if len(release.samples) > 0]
 
+    # Filter out releases not in --plot-include filter
+    if include:
+        print(f"Filtering with --plot-include={include}")
+        releases = [release for release in releases
+                    if include in release.solvable_img()]
+        if baseline:
+            baseline = [release for release in baseline
+                        if include in release.solvable_img()]
+
     # Convert baseline to dictionary for simpler lookup
     if baseline is not None:
         compute_stats(baseline)
@@ -268,11 +277,10 @@ def plot(releases:list, baseline:list=None, include:str=""):
                     > PLOT_DEVS * (release.std_dev + baseline[release.milestone()].std_dev)]
         print(f"Filtered out {old - len(releases)} releases within statistical bounds")
 
-    # Filter out releases not in --plot-include filter
-    if include:
-        print(f"Filtering with --plot-include={include}")
-        releases = [release for release in releases
-                    if include in release.solvable_img()]
+    # Bail out if no releases remain
+    if len(releases) == 0:
+        print("No releases left to plot")
+        return
 
     # Sort by mean time to solve
     releases.sort(key=lambda release: release.average
@@ -330,6 +338,12 @@ def plot(releases:list, baseline:list=None, include:str=""):
     for i, release in enumerate(releases):
         if baseline is not None and release.milestone() in baseline and release.average is not None and baseline[release.milestone()].average is not None and release.average > baseline[release.milestone()].average:
             ax.axhspan(positions[i] - 0.5, positions[i] + 0.3, color='yellow', alpha=0.1)
+
+    # Check if the lengths match
+    if len(release_samples) != len(release_labels):
+        raise ValueError("The number of release samples and labels must be"
+                         " the same: "
+                         f"{len(release_samples)} != {len(release_labels)}")
 
     # Plot the boxplots for releases
     ax.boxplot(release_samples, tick_labels=release_labels, vert=False,
