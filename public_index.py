@@ -246,7 +246,8 @@ def compute_stats(releases:list):
             release.average = None
 
 
-def plot(releases:list, baseline:list=None, include:str=""):
+def plot(releases:list, baseline:list=None, include:str="",
+         tag:str="", compare:str=""):
 
     # Filter out releases with no samples
     releases = [release for release in releases if len(release.samples) > 0]
@@ -310,7 +311,9 @@ def plot(releases:list, baseline:list=None, include:str=""):
 
     # Plot a box plot for each release (if no baseline) or with a significant deviation
     fig, ax = plt.subplots()
-    ax.set_title(f"Alire {ALR_VERSION}")
+    ax.set_title(f"Alire {tag if tag else ALR_VERSION}"
+                 f"{' vs ' if compare else ''}"
+                 f"{compare if compare else ''}")
     ax.set_ylabel("Time to solve (s)")
     ax.set_xlabel("Release")
 
@@ -443,7 +446,8 @@ def main():
         args.rounds = 1
 
     if args.plot:
-        plot(releases, baseline, include=args.plot_include)
+        plot(releases, baseline, include=args.plot_include,
+             tag=args.tag, compare=(args.compare if args.compare else None))
     elif args.prune:
         for release in releases:
             print(f"{release.name}={release.version}: ", end="")
